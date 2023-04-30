@@ -555,8 +555,6 @@ class SeanceClient(discord.Client):
         _command, *args = message.content.split(' ')
         option = ' '.join(args)
 
-        print(f"Autoproxy option: {option}.", file=sys.stdout)
-
         if self.autoproxy_manager is not None:
             self.autoproxy_manager.handle_command(option)
         else:
@@ -702,7 +700,7 @@ class SeanceClient(discord.Client):
                     await handler(message)
                     return
 
-        # Handle autoproxy
+        # Lastly handle autoproxy if nothing else matched
         if self.autoproxy_manager is not None and self.autoproxy_manager.should_autoproxy(message):
             await self._handle_content(message, message.content)
 

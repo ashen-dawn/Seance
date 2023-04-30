@@ -10,7 +10,7 @@ CLEAR_LATCH_PATTERN = re.compile(r'\\\\.*', re.DOTALL)
 
 class AutoproxyMode(Enum):
     Off = 0,
-    Always = 1,
+    On = 1,
     Latch_Unlatched = 2
     Latch_Latched = 3
 
@@ -34,7 +34,7 @@ class AutoproxyManager:
             self.proxy_mode = AutoproxyMode.Latch_Unlatched
 
         elif option == self.client.user.mention:
-            self.proxy_mode = AutoproxyMode.Always
+            self.proxy_mode = AutoproxyMode.On
 
         elif DISCORD_MENTION_PATTERN.match(option):
             self.proxy_mode = AutoproxyMode.Off
@@ -45,20 +45,26 @@ class AutoproxyManager:
             self.last_message_time = time.time()
 
     def should_autoproxy(self, message):
+        # Single \ at start always skips with no further logic
+        if SKIP_LATCH_PATTERN.match(message.content):
+            return False
+
         match self.proxy_mode:
+            # Not in autoproxy, or in unlatched state, skip proxy
             case AutoproxyMode.Off | AutoproxyMode.Latch_Unlatched:
                 return False
 
-            case AutoproxyMode.Always:
-                return True
+            # When enabled, only autoproxy messages that don't look like a peer's explicit proxy
+            case AutoproxyMode.On:
+                if self.peer_pattern.match(message.content):
+                    return False
+                else:
+                    return True
 
+            # When latched, clear if we see a peer's message, otherwise proxy it
             case AutoproxyMode.Latch_Latched:
-
                 if self.peer_pattern.match(message.content) or CLEAR_LATCH_PATTERN.match(message.content):
                     self.proxy_mode = AutoproxyMode.Latch_Unlatched
-                    return False
-
-                if SKIP_LATCH_PATTERN.match(message.content):
                     return False
 
                 return True
