@@ -33,6 +33,7 @@ except ImportError:
 
 from ..config import ConfigOption, ConfigHandler
 from .dm_mode import DiscordDMGuildManager
+from .autoproxy import AutoproxyManager
 
 
 # A pattern that matches a link to a Discord message, and captures the channel ID and message ID.
@@ -56,7 +57,7 @@ def running_in_systemd() -> bool:
 
 class SeanceClient(discord.Client):
 
-    def __init__(self, ref_user_id, pattern, command_prefix, *args, dm_guild_id=None, dm_manager_options=None,
+    def __init__(self, ref_user_id, pattern, peer_pattern, command_prefix, *args, dm_guild_id=None, dm_manager_options=None,
         sdnotify=False, default_status=False, default_presence=False, forward_pings=None, **kwargs
     ):
 
@@ -67,6 +68,11 @@ class SeanceClient(discord.Client):
             self.pattern = re.compile(pattern, re.DOTALL)
         else:
             self.pattern = pattern
+
+        if peer_pattern is not None:
+            self.autoproxy_manager = AutoproxyManager(self, peer_pattern)
+        else:
+            self.autoproxy_manager = None
 
         self.command_prefix = command_prefix
         self.dm_guild_id = dm_guild_id
@@ -95,6 +101,7 @@ class SeanceClient(discord.Client):
             '!status': self.handle_status_command,
             '!presence': self.handle_presence_command,
             '!nick': self.handle_nickname_command,
+            '!auto': self.handle_autoproxy_command,
         }
 
         self.shortcut_handlers = {
@@ -542,6 +549,18 @@ class SeanceClient(discord.Client):
         except HTTPException as e:
             print(f"Failed to delete messsage: {e}.", file=sys.stderr)
 
+    async def handle_autoproxy_command(self, message: Message):
+        """ !auto [@mention|off|latch] -- sets autoproxy mode """
+
+        _command, *args = message.content.split(' ')
+        option = ' '.join(args)
+
+        print(f"Autoproxy option: {option}.", file=sys.stdout)
+
+        if self.autoproxy_manager is not None:
+            self.autoproxy_manager.handle_command(option)
+        else:
+            print("Autoproxy command used but is not enabled.", file=sys.stderr)
 
     async def handle_simple_reaction(self, message: Message, content: str):
         """ Adds or removes a simple emoji reaction to a given message """
@@ -672,15 +691,20 @@ class SeanceClient(discord.Client):
         # See if the message matches the pattern that indicates we should proxy it.
         if matches := self.pattern.match(message.content):
             await self._handle_content(message, matches.groupdict()['content'])
+            if self.autoproxy_manager is not None:
+                self.autoproxy_manager.on_manual_proxy()
+            return
 
-
-        # Otherwise check for command prefixes.
+        # Check for command prefixes.
         else:
             for string, handler in self.command_handlers.items():
                 if self._matches_command(message.content, string):
                     await handler(message)
-                    break
+                    return
 
+        # Handle autoproxy
+        if self.autoproxy_manager is not None and self.autoproxy_manager.should_autoproxy(message):
+            await self._handle_content(message, message.content)
 
     async def on_message_edit(self, before: Message, after: Message):
 
@@ -756,6 +780,9 @@ def main():
         ConfigOption(name='pattern', required=True,
             help="The Python regex used to match messages. Must have a named capture group called `content`.",
         ),
+        ConfigOption(name='peer pattern', required=False, default=None,
+            help="A Python regex used to determine if another instance will begin proxying. Supplying this enables autoproxy modes.",
+        ),
         ConfigOption(name='prefix', required=False, default='',
             help="An additional prefix to accept commands with.",
         ),
@@ -801,6 +828,14 @@ def main():
         print('Invalid regular expression given for --pattern', file=sys.stderr)
         raise
 
+    if options.peer_pattern is not None:
+        try:
+            peer_pattern = re.compile(options.peer_pattern, re.DOTALL)
+        except:
+            print('Invalid regular expression given for --peer-pattern',
+                  file=sys.stderr)
+            raise
+
     if 'content' not in pattern.groupindex:
         options.argparser.error('regex pattern must have a named capture group called `content` (see https://docs.python.org/3/library/re.html#index-13')
 
@@ -823,7 +858,7 @@ def main():
     intents.members = True
     intents.presences = True
     intents.message_content = True
-    client = SeanceClient(options.ref_user_id, pattern, options.prefix,
+    client = SeanceClient(options.ref_user_id, pattern, peer_pattern, options.prefix,
         sdnotify=options.systemd_notify,
         dm_guild_id=options.dm_server_id,
         dm_manager_options=dict(proxy_untagged=options.dm_proxy_untagged),
