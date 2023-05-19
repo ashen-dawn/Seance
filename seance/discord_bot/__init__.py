@@ -57,7 +57,7 @@ def running_in_systemd() -> bool:
 
 class SeanceClient(discord.Client):
 
-    def __init__(self, ref_user_id, pattern, peer_pattern, command_prefix, *args, dm_guild_id=None, dm_manager_options=None,
+    def __init__(self, ref_user_id, pattern, peer_pattern, ap_latch_scope, command_prefix, *args, dm_guild_id=None, dm_manager_options=None,
         sdnotify=False, default_status=False, default_presence=False, forward_pings=None, **kwargs
     ):
 
@@ -70,7 +70,7 @@ class SeanceClient(discord.Client):
             self.pattern = pattern
 
         if peer_pattern is not None:
-            self.autoproxy_manager = AutoproxyManager(self, peer_pattern)
+            self.autoproxy_manager = AutoproxyManager(self, peer_pattern, ap_latch_scope)
         else:
             self.autoproxy_manager = None
 
@@ -556,7 +556,7 @@ class SeanceClient(discord.Client):
         option = ' '.join(args)
 
         if self.autoproxy_manager is not None:
-            self.autoproxy_manager.handle_command(option)
+            self.autoproxy_manager.handle_command(option, message)
         else:
             print("Autoproxy command used but is not enabled.", file=sys.stderr)
 
@@ -690,7 +690,7 @@ class SeanceClient(discord.Client):
         if matches := self.pattern.match(message.content):
             await self._handle_content(message, matches.groupdict()['content'])
             if self.autoproxy_manager is not None:
-                self.autoproxy_manager.on_manual_proxy()
+                self.autoproxy_manager.on_manual_proxy(message)
             return
 
         # Check for command prefixes.
@@ -799,6 +799,9 @@ def main():
         ConfigOption(name='Forward pings', required=False, default=False, type=bool,
             help="Whether to message the proxied user upon the bot getting pinged",
         ),
+        ConfigOption(name='Autoproxy latch scope', required=False, default='server',
+            help="When using autoproxy latch mode, whether to latch globally, per server, or per channel.",
+        ),
     ]
 
     sdnotify_available = 'sdnotify' in sys.modules
@@ -856,7 +859,7 @@ def main():
     intents.members = True
     intents.presences = True
     intents.message_content = True
-    client = SeanceClient(options.ref_user_id, pattern, peer_pattern, options.prefix,
+    client = SeanceClient(options.ref_user_id, pattern, peer_pattern, options.autoproxy_latch_scope, options.prefix,
         sdnotify=options.systemd_notify,
         dm_guild_id=options.dm_server_id,
         dm_manager_options=dict(proxy_untagged=options.dm_proxy_untagged),
