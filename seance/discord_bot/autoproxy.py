@@ -1,6 +1,7 @@
 import re
 import time
 from enum import Enum
+import sys
 
 
 DISCORD_MENTION_PATTERN = re.compile(r'<@[0-9]+>', re.DOTALL)
@@ -21,7 +22,7 @@ class AutoproxyState:
 
 
 class AutoproxyManager:
-    def __init__(self, client, peer_pattern, latch_scope):
+    def __init__(self, client, peer_pattern, latch_scope, latch_timeout):
         if not isinstance(peer_pattern, re.Pattern):
             self.peer_pattern = re.compile(peer_pattern, re.DOTALL)
         else:
@@ -30,6 +31,7 @@ class AutoproxyManager:
         self.client = client
         self.states = {}
         self.latch_scope = latch_scope or DEFAULT_LATCH_MODE
+        self.latch_timeout = latch_timeout or None
 
     def _get_autoproxy_state_key(self, message):
         if self.latch_scope == "global":
@@ -99,6 +101,12 @@ class AutoproxyManager:
                     state.proxy_mode = AutoproxyMode.Latch_Unlatched
                     return False
 
-                # TODO: check time
+                # Make sure latch timeout has not expired
+                if self.latch_timeout is not None:
+                    time_diff = time.time() - state.last_message_time
+                    if time_diff > self.latch_timeout:
+                        return False
 
+                state.last_message_time = time.time()
                 return True
+
