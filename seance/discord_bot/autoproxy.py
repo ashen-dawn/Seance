@@ -71,7 +71,7 @@ class AutoproxyManager:
     def on_manual_proxy(self, message):
         state = self._get_autoproxy_state(message)
 
-        if state.proxy_mode == AutoproxyMode.Latch_Unlatched:
+        if state.proxy_mode == AutoproxyMode.Latch_Unlatched or state.proxy_mode == AutoproxyMode.Latch_Latched:
             state.proxy_mode = AutoproxyMode.Latch_Latched
             state.last_message_time = time.time()
 
