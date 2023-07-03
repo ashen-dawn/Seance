@@ -57,7 +57,7 @@ def running_in_systemd() -> bool:
 
 class SeanceClient(discord.Client):
 
-    def __init__(self, ref_user_id, pattern, peer_pattern, ap_latch_scope, ap_latch_timeout, command_prefix, *args, dm_guild_id=None, dm_manager_options=None,
+    def __init__(self, ref_user_id, pattern, peer_pattern, ap_latch_scope, ap_start_enabled, ap_latch_timeout, command_prefix, *args, dm_guild_id=None, dm_manager_options=None,
         sdnotify=False, default_status=False, default_presence=False, forward_pings=None, **kwargs
     ):
 
@@ -70,7 +70,7 @@ class SeanceClient(discord.Client):
             self.pattern = pattern
 
         if peer_pattern is not None:
-            self.autoproxy_manager = AutoproxyManager(self, peer_pattern, ap_latch_scope, ap_latch_timeout)
+            self.autoproxy_manager = AutoproxyManager(self, peer_pattern, ap_latch_scope, ap_latch_timeout, ap_start_enabled)
         else:
             self.autoproxy_manager = None
 
@@ -438,7 +438,7 @@ class SeanceClient(discord.Client):
 
 
     async def handle_presence_command(self, message: Message):
-        """ !presence [offline|dnd|idle|online|sync] -- changes the bot user's presence. """
+        """ !presence [offline|dnd|idle|online|sync|latch] -- changes the bot user's presence. """
 
         # Parse the command.
         try:
@@ -455,6 +455,11 @@ class SeanceClient(discord.Client):
                 await self._set_presence(status=self._cached_status)
             except HTTPException as e:
                 print(f"Failed to apply presence: {e}.", file=sys.stderr)
+
+        # If we're switching to latch follow
+        if presence == 'latch':
+            self._status_override = "latch"
+            await self.handle_global_autoproxy_change()
 
         # Otherwise, apply the new override.
         else:
@@ -494,6 +499,11 @@ class SeanceClient(discord.Client):
 
             self._status_override = None
             self._cached_status = applied_presence
+
+        # IF it's latch, then start that
+        elif self.default_presence == 'latch':
+            self._status_override = "latch"
+            await self.handle_global_autoproxy_change()
 
         # Otherwise, set the override.
         else:
@@ -556,7 +566,7 @@ class SeanceClient(discord.Client):
         option = ' '.join(args)
 
         if self.autoproxy_manager is not None:
-            self.autoproxy_manager.handle_command(option, message)
+            await self.autoproxy_manager.handle_command(option, message)
         else:
             print("Autoproxy command used but is not enabled.", file=sys.stderr)
 
@@ -606,6 +616,17 @@ class SeanceClient(discord.Client):
             silent=silent
         )
 
+    async def handle_global_autoproxy_change(self):
+        if self._status_override != 'latch':
+            return
+
+        active = self.autoproxy_manager.get_global_state()
+
+        if active:
+            await self._set_presence(status=Status.online)
+        else:
+            await self._set_presence(status=Status.offline)
+
     #
     # discord.py event handler overrides.
     #
@@ -619,13 +640,6 @@ class SeanceClient(discord.Client):
             self.dm_guild_manager = DiscordDMGuildManager(self, guild, pattern=self.pattern, **self.dm_manager_options)
             await self.dm_guild_manager.setup()
 
-        print("Séance Discord client startup complete.")
-
-        if self.sdnotify:
-            # Tell systemd we've started up.
-            notifer = sdnotify.SystemdNotifier(debug=True)
-            notifer.notify("READY=1")
-
         if self.default_status:
             print("Setting startup status {}".format(self.default_status))
             default_activity = self._parse_activity_spec(self.default_status)
@@ -634,6 +648,13 @@ class SeanceClient(discord.Client):
         if self.default_presence:
             print("Setting startup presence {}".format(self.default_presence))
             await self.handle_startup_presence()
+
+        print("Séance Discord client startup complete.")
+
+        if self.sdnotify:
+            # Tell systemd we've started up.
+            notifer = sdnotify.SystemdNotifier(debug=True)
+            notifer.notify("READY=1")
 
 
     async def on_typing(self, channel, user, when):
@@ -690,7 +711,7 @@ class SeanceClient(discord.Client):
         if matches := self.pattern.match(message.content):
             await self._handle_content(message, matches.groupdict()['content'])
             if self.autoproxy_manager is not None:
-                self.autoproxy_manager.on_manual_proxy(message)
+                await self.autoproxy_manager.on_manual_proxy(message)
             return
 
         # Check for command prefixes.
@@ -701,7 +722,7 @@ class SeanceClient(discord.Client):
                     return
 
         # Lastly handle autoproxy if nothing else matched
-        if self.autoproxy_manager is not None and self.autoproxy_manager.should_autoproxy(message):
+        if self.autoproxy_manager is not None and (await self.autoproxy_manager.should_autoproxy(message)):
             await self._handle_content(message, message.content)
 
     async def on_message_edit(self, before: Message, after: Message):
@@ -802,6 +823,9 @@ def main():
         ConfigOption(name='Autoproxy latch scope', required=False, default='server',
             help="When using autoproxy latch mode, whether to latch globally, per server, or per channel.",
         ),
+        ConfigOption(name='Autoproxy start enabled', required=False, default=False, type=bool,
+            help="Whether autoproxy should start in an unlatched mode.",
+        ),
         ConfigOption(name='Autoproxy latch timeout', required=False, default=None, type=int,
             help="When using autoproxy latch mode, how long to hold a latch before discarding it for inactivity (in seconds)",
         ),
@@ -863,7 +887,7 @@ def main():
     intents.presences = True
     intents.message_content = True
     client = SeanceClient(options.ref_user_id, pattern, peer_pattern, options.autoproxy_latch_scope,
-                          options.autoproxy_latch_timeout, options.prefix,
+                          options.autoproxy_start_enabled, options.autoproxy_latch_timeout, options.prefix,
         sdnotify=options.systemd_notify,
         dm_guild_id=options.dm_server_id,
         dm_manager_options=dict(proxy_untagged=options.dm_proxy_untagged),
