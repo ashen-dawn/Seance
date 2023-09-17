@@ -158,7 +158,7 @@
                     --token ${member.discordToken} \
                     --ref-user-id ${system.referenceUserID} \
                     --pattern ${lib.escapeShellArg member.messagePattern} \
-                    ${optionalString (system.peerPattern != null) "--peerPattern ${lib.escapeShellArg system.peerPattern}"} \
+                    ${optionalString (system.peerPattern != null) "--peer-pattern ${lib.escapeShellArg system.peerPattern}"} \
                     ${optionalString (member.commandPrefix != null) "--prefix ${member.commandPrefix}"} \
                     --autoproxy-latch-scope ${system.autoproxyLatchScope} \
                     ${optionalString (system.autoproxyLatchTimeout != null) "--autoproxy-latch-timeout ${toString system.autoproxyLatchTimeout}"} \
